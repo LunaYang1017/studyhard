@@ -1,1 +1,49 @@
-node_modules
+# 依赖
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# 环境变量
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 日志
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 构建输出
+dist/
+build/
+*.egg-info/
+
+# 上传的文件（生产环境不需要）
+backend/uploads/
+backend/data/uploads/
+
+# 用户数据（生产环境不需要）
+backend/data/users/
+
+# 系统文件
+*.bak
+*.backup
