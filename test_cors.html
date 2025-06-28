@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CORS测试</title>
+</head>
+<body>
+    <h1>CORS测试页面</h1>
+    <button onclick="testCORS()">测试CORS</button>
+    <button onclick="testChat()">测试聊天API</button>
+    <div id="result"></div>
+
+    <script>
+        async function testCORS() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '测试中...';
+            
+            try {
+                const response = await fetch('http://localhost:8000/test-cors', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<h3>CORS测试成功！</h3><pre>${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<h3>CORS测试失败！</h3><pre>${error.message}</pre>`;
+            }
+        }
+
+        async function testChat() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '测试聊天API中...';
+            
+            try {
+                const response = await fetch('http://localhost:8000/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: '你好，请介绍一下自己',
+                        knowledge_base_1: [],
+                        knowledge_base_2: []
+                    })
+                });
+                
+                const data = await response.json();
+                resultDiv.innerHTML = `<h3>聊天API测试成功！</h3><pre>${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<h3>聊天API测试失败！</h3><pre>${error.message}</pre>`;
+            }
+        }
+    </script>
+</body>
+</html> 

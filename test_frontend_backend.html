@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前后端连接测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        button { padding: 10px 20px; margin: 5px; background-color: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        pre { background-color: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>前后端连接测试</h1>
+    
+    <div class="test-section">
+        <h3>1. 后端健康检查</h3>
+        <button onclick="testHealth()">测试后端健康状态</button>
+        <div id="health-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>2. 聊天API测试</h3>
+        <button onclick="testChat()">测试聊天功能</button>
+        <div id="chat-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>3. 生成题目API测试</h3>
+        <button onclick="testGenerateQuestions()">测试生成题目</button>
+        <div id="questions-result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>4. 知识库API测试</h3>
+        <button onclick="testKnowledgeBase()">测试知识库</button>
+        <div id="kb-result"></div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+        
+        async function testHealth() {
+            const resultDiv = document.getElementById('health-result');
+            resultDiv.innerHTML = '<p>测试中...</p>';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/health`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <h4>✅ 后端健康检查成功</h4>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h4>❌ 后端健康检查失败</h4>
+                        <p>错误: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        async function testChat() {
+            const resultDiv = document.getElementById('chat-result');
+            resultDiv.innerHTML = '<p>测试中...</p>';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: "你好，请介绍一下你自己",
+                        knowledge_base_1: [],
+                        knowledge_base_2: []
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <h4>✅ 聊天API测试成功</h4>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h4>❌ 聊天API测试失败</h4>
+                        <p>错误: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        async function testGenerateQuestions() {
+            const resultDiv = document.getElementById('questions-result');
+            resultDiv.innerHTML = '<p>测试中...</p>';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/generate-questions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        topic: "考试复习",
+                        difficulty: "medium",
+                        count: 2,
+                        knowledge_base_1: [],
+                        knowledge_base_2: []
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <h4>✅ 生成题目API测试成功</h4>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h4>❌ 生成题目API测试失败</h4>
+                        <p>错误: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        async function testKnowledgeBase() {
+            const resultDiv = document.getElementById('kb-result');
+            resultDiv.innerHTML = '<p>测试中...</p>';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/knowledge-base`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="success">
+                            <h4>✅ 知识库API测试成功</h4>
+                            <pre>${JSON.stringify(data, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h4>❌ 知识库API测试失败</h4>
+                        <p>错误: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html> 

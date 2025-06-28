@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前后端交互测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        .result { margin-top: 10px; padding: 10px; background: #f5f5f5; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e8; color: #2e7d32; }
+    </style>
+</head>
+<body>
+    <h1>前后端交互测试</h1>
+    
+    <div class="test-section">
+        <h3>1. 测试后端连接</h3>
+        <button onclick="testBackend()">测试后端</button>
+        <div id="backend-result" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>2. 测试聊天API</h3>
+        <button onclick="testChat()">测试聊天</button>
+        <div id="chat-result" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>3. 测试知识库API</h3>
+        <button onclick="testKnowledgeBase()">测试知识库</button>
+        <div id="kb-result" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>4. 测试文件上传</h3>
+        <input type="file" id="test-file" accept=".pdf,.docx,.txt">
+        <button onclick="testUpload()">测试上传</button>
+        <div id="upload-result" class="result"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        
+        function showResult(elementId, message, isError = false) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = message;
+            element.className = `result ${isError ? 'error' : 'success'}`;
+        }
+        
+        async function testBackend() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                showResult('backend-result', `✅ 后端连接成功<br>状态: ${data.status}<br>文件数: ${JSON.stringify(data.files_count)}`);
+            } catch (error) {
+                showResult('backend-result', `❌ 后端连接失败: ${error.message}`, true);
+            }
+        }
+        
+        async function testChat() {
+            try {
+                const response = await fetch(`${API_BASE}/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: '你好，请介绍一下自己',
+                        knowledge_base_1: [],
+                        knowledge_base_2: []
+                    })
+                });
+                const data = await response.json();
+                showResult('chat-result', `✅ 聊天API成功<br>回答: ${data.answer.substring(0, 100)}...`);
+            } catch (error) {
+                showResult('chat-result', `❌ 聊天API失败: ${error.message}`, true);
+            }
+        }
+        
+        async function testKnowledgeBase() {
+            try {
+                const response = await fetch(`${API_BASE}/knowledge-base`);
+                const data = await response.json();
+                showResult('kb-result', `✅ 知识库API成功<br>复习资料: ${data.knowledge_base_1.length}个文件<br>题目库: ${data.knowledge_base_2.length}个文件`);
+            } catch (error) {
+                showResult('kb-result', `❌ 知识库API失败: ${error.message}`, true);
+            }
+        }
+        
+        async function testUpload() {
+            const fileInput = document.getElementById('test-file');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showResult('upload-result', '❌ 请选择文件', true);
+                return;
+            }
+            
+            try {
+                const formData = new FormData();
+                formData.append('files', file);
+                formData.append('file_info', JSON.stringify({
+                    id: 'test-file-1',
+                    name: file.name,
+                    type: 'knowledge'
+                }));
+                
+                const response = await fetch(`${API_BASE}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                showResult('upload-result', `✅ 文件上传成功<br>文件名: ${file.name}<br>大小: ${file.size}字节`);
+            } catch (error) {
+                showResult('upload-result', `❌ 文件上传失败: ${error.message}`, true);
+            }
+        }
+    </script>
+</body>
+</html> 
