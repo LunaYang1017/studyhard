@@ -68,3 +68,19 @@ class Config:
             raise ValueError(f"配置错误: {'; '.join(errors)}")
         
         return True 
+
+# ========== AI服务全局配置 ===========
+DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_API_BASE = "https://api.deepseek.com"
+DEFAULT_API_KEY = "sk-19c732636fc44f73a883da2ff1c5149f"  # 请在此处更换默认密钥
+MODEL_CONFIGS = {
+    "deepseek-chat": {
+        "api_base": "https://api.deepseek.com",
+        "api_key": DEFAULT_API_KEY,
+    },
+    "step-1-8k": {
+        "api_base": "https://api.stepfun.com/v1",
+        "api_key": "",
+    },
+    # 可扩展其它模型
+} 

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -16,6 +16,9 @@ import io
 import re
 import uuid
 from pathlib import Path
+import glob
+from backend.config import DEFAULT_MODEL, DEFAULT_API_BASE, DEFAULT_API_KEY, MODEL_CONFIGS
+from openai import OpenAI
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -206,25 +209,29 @@ def scan_uploads_directory():
 # 在应用启动时扫描uploads目录
 scan_uploads_directory()
 
-# 您的API密钥配置
-API_KEY = os.getenv("STEPFUN_API_KEY", "5LHfDtyA4XFX5ObOqZtIrz0UlOMcYEn2hvy0FQdhT113enLNiLySnSWndOzz75ir4")
-BASE_URL = os.getenv("STEPFUN_BASE_URL", "https://api.stepfun.com/v1")
-MODEL_NAME = os.getenv("STEPFUN_MODEL", "step-1-8k")
+# 新增：获取模型配置
 
-def latex_to_natural(text):
-    # 替换 $$...$$、\[...\]、\(...\) 为自然语言
-    text = re.sub(r'\$\$(.*?)\$\$', lambda m: f"【公式内容：{m.group(1).strip()}，请结合上下文理解】", text, flags=re.DOTALL)
-    text = re.sub(r'\\\[(.*?)\\\]', lambda m: f"【公式内容：{m.group(1).strip()}，请结合上下文理解】", text, flags=re.DOTALL)
-    text = re.sub(r'\\\((.*?)\\\)', lambda m: f"【公式内容：{m.group(1).strip()}，请结合上下文理解】", text, flags=re.DOTALL)
-    return text
+def get_model_config(model_name, api_key=None, api_base=None):
+    config = MODEL_CONFIGS.get(model_name, {})
+    return {
+        "api_base": api_base or config.get("api_base", DEFAULT_API_BASE),
+        "api_key": api_key or config.get("api_key", DEFAULT_API_KEY),
+    }
 
 # 调用大模型API
-async def call_large_model_api(message: str, knowledge_base_1: List, knowledge_base_2: List) -> Dict[str, Any]:
+async def call_large_model_api(message: str, knowledge_base_1: List, knowledge_base_2: List, model: str, api_key: str, api_base: str) -> Dict[str, Any]:
     """
     调用阶跃星辰大模型API的函数
     使用您提供的API密钥
     """
     try:
+        # 新增：知识库为空时直接友好提示
+        if (not knowledge_base_1 or len(knowledge_base_1) == 0) and (not knowledge_base_2 or len(knowledge_base_2) == 0):
+            return {
+                "answer": "知识库为空，请先上传复习资料或题库文件后再提问。",
+                "references": []
+            }
+        
         # 题号正则（如2-2、2_2、2．2、2.2、2题2小题等）
         question_no_match = re.search(r'(\d+[\-_.．、]?[\d]+)', message)
         if question_no_match and knowledge_base_2:
@@ -317,30 +324,28 @@ async def call_large_model_api(message: str, knowledge_base_1: List, knowledge_b
 
             user_message = f"用户问题：{message}\n\n请基于我的知识库内容回答这个问题，并在回答中标注知识库引用。"
         
-        print(f"正在调用API，URL: {BASE_URL}/chat/completions")
-        print(f"API密钥: {API_KEY[:10]}...")
-        print(f"模型: {MODEL_NAME}")
+        # 获取模型配置，兼容前端未传递时用后端默认
+        model_conf = get_model_config(model, api_key, api_base)
+        real_api_key = model_conf["api_key"]
+        real_api_base = model_conf["api_base"]
+        print(f"[call_large_model_api] 调用API: url={real_api_base}/chat/completions, model={model}, api_key={real_api_key[:8]}")
+        print(f"API密钥: {real_api_key[:10]}...")
+        print(f"模型: {model}")
         
         # 调用阶跃星辰API
         completion = requests.post(
-            f"{BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {API_KEY}"},
+            f"{real_api_base}/chat/completions",
+            headers={"Authorization": f"Bearer {real_api_key}"},
             json={
-                "model": MODEL_NAME,
+                "model": model,
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                    },
-                    {
-                        "role": "user", 
-                        "content": user_message
-                    }
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
                 ],
                 "max_tokens": 2000,
                 "temperature": 0.7
             },
-            timeout=30
+            timeout=60
         )
         
         print(f"API响应状态码: {completion.status_code}")
@@ -353,7 +358,13 @@ async def call_large_model_api(message: str, knowledge_base_1: List, knowledge_b
         # 提取回答
         response_data = completion.json()
         print(f"API响应数据: {response_data}")
-        
+        # 更严格的健壮性校验，防止 NoneType 报错
+        if not response_data or not isinstance(response_data, dict):
+            raise Exception(f"API响应为空或非字典: {response_data}")
+        if "choices" not in response_data or not isinstance(response_data["choices"], list) or not response_data["choices"]:
+            raise Exception(f"API响应格式异常: {response_data}")
+        if "message" not in response_data["choices"][0] or "content" not in response_data["choices"][0]["message"]:
+            raise Exception(f"API响应内容缺失: {response_data}")
         answer = response_data["choices"][0]["message"]["content"]
         
         # 提取引用（简单解析）
@@ -364,18 +375,12 @@ async def call_large_model_api(message: str, knowledge_base_1: List, knowledge_b
                     "file": file.get('name', ''),
                     "content": file.get('content', '')[:200] + "..."
                 })
-        
-        # 将公式转换为自然语言
-        answer = latex_to_natural(answer)
-        
-        # 确保references是字符串格式，避免前端显示[object Object]
+        # 优化：拼接引用为字符串，避免 [object Object]
         if references:
-            # 将references格式化为字符串，添加到answer中
-            references_text = "\n\n**知识库引用：**\n"
+            references_text = "\n\n【知识库引用】\n"
             for ref in references:
                 references_text += f"- {ref['file']}: {ref['content']}\n"
             answer += references_text
-            # 清空references数组，因为已经添加到answer中了
             references = []
         
         return {
@@ -395,7 +400,7 @@ async def call_large_model_api(message: str, knowledge_base_1: List, knowledge_b
         }
 
 # 调用大模型API生成题目
-async def call_large_model_for_questions(topic: str, difficulty: str, count: int, question_type: str, knowledge_base_1: List, knowledge_base_2: List) -> Dict[str, Any]:
+async def call_large_model_for_questions(topic: str, difficulty: str, count: int, question_type: str, knowledge_base_1: List, knowledge_base_2: List, model: str, api_key: str, api_base: str) -> Dict[str, Any]:
     """
     调用阶跃星辰大模型API生成题目的函数
     优先从考试题目知识库中提取题目，或基于知识点生成同类型题目
@@ -463,12 +468,16 @@ async def call_large_model_for_questions(topic: str, difficulty: str, count: int
 3. 每道题都要标注来源（提取自题目库 或 基于知识点生成）
 4. 包含详细答案和解释"""
 
-        # 调用阶跃星辰API
+        # 获取模型配置，兼容前端未传递时用后端默认
+        model_conf = get_model_config(model, api_key, api_base)
+        real_api_key = model_conf["api_key"]
+        real_api_base = model_conf["api_base"]
+        print(f"[call_large_model_for_questions] 调用API: url={real_api_base}/chat/completions, model={model}, api_key={real_api_key[:8]}")
         completion = requests.post(
-            f"{BASE_URL}/chat/completions",
-            headers={"Authorization": f"Bearer {API_KEY}"},
+            f"{real_api_base}/chat/completions",
+            headers={"Authorization": f"Bearer {real_api_key}"},
             json={
-                "model": MODEL_NAME,
+                "model": model,
                 "messages": [
                     {
                         "role": "system",
@@ -486,9 +495,6 @@ async def call_large_model_for_questions(topic: str, difficulty: str, count: int
         
         # 提取回答
         response_text = completion.json()["choices"][0]["message"]["content"]
-        
-        # 将公式转换为自然语言
-        response_text = latex_to_natural(response_text)
         
         # 尝试解析JSON
         try:
@@ -612,80 +618,104 @@ async def mock_questions_response(topic: str, difficulty: str, count: int, quest
 
 # 文件内容解析函数
 async def extract_file_content(file_path: str, file_type: str) -> str:
-    """提取文件内容"""
+    """提取文件内容，并标注页码或章节信息"""
     try:
         if not os.path.exists(file_path):
             return f"文件不存在: {file_path}"
-        
         if file_type == "application/pdf":
-            # 提取PDF内容
+            # 提取PDF内容，按页分割并标注页码
             try:
                 with open(file_path, 'rb') as file:
                     pdf_reader = PyPDF2.PdfReader(file)
                     content = ""
-                    for page in pdf_reader.pages:
+                    for i, page in enumerate(pdf_reader.pages):
                         page_text = page.extract_text()
-                        # 处理Unicode编码问题
                         if page_text:
                             try:
-                                # 尝试修复编码问题
                                 page_text = page_text.encode('utf-8', errors='ignore').decode('utf-8')
-                                content += page_text + "\n"
+                                content += f"【第{i+1}页】\n" + page_text + "\n"
                             except UnicodeError:
-                                # 如果还有问题，跳过这一页
                                 continue
                     return content.strip()
             except Exception as e:
                 return f"PDF解析失败: {str(e)}"
-                
         elif file_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            # 提取DOCX内容
+            # 提取DOCX内容，尝试分章节
             try:
                 doc = Document(file_path)
                 content = ""
+                current_section = ""
                 for paragraph in doc.paragraphs:
                     text = paragraph.text
-                    # 处理Unicode编码问题
                     if text:
                         try:
                             text = text.encode('utf-8', errors='ignore').decode('utf-8')
-                            content += text + "\n"
                         except UnicodeError:
                             continue
+                        # 检查是否为章节标题
+                        if re.match(r"^第[0-9一二三四五六七八九十]+章", text) or re.match(r"^[0-9]+(\\.[0-9]+)+", text):
+                            current_section = text.strip()
+                            content += f"\n【{current_section}】\n"
+                        else:
+                            if current_section:
+                                content += f"[{current_section}] "
+                            content += text + "\n"
                 return content.strip()
             except Exception as e:
                 return f"DOCX解析失败: {str(e)}"
-                
         elif file_type in ["text/plain", "text/markdown"]:
-            # 提取文本文件内容
+            # 提取文本文件内容，尝试分章节
             try:
                 async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
-                    content = await file.read()
-                    # 确保内容可以正确编码
-                    content = content.encode('utf-8', errors='ignore').decode('utf-8')
-                    return content.strip()
+                    raw_content = await file.read()
+                content = ""
+                lines = raw_content.splitlines()
+                current_section = ""
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # 检查是否为章节标题
+                    if re.match(r"^第[0-9一二三四五六七八九十]+章", line) or re.match(r"^[0-9]+(\\.[0-9]+)+", line):
+                        current_section = line
+                        content += f"\n【{current_section}】\n"
+                    else:
+                        if current_section:
+                            content += f"[{current_section}] "
+                        content += line + "\n"
+                return content.strip()
             except Exception as e:
-                # 如果UTF-8失败，尝试其他编码
                 try:
                     async with aiofiles.open(file_path, 'r', encoding='gbk', errors='ignore') as file:
-                        content = await file.read()
-                        content = content.encode('utf-8', errors='ignore').decode('utf-8')
-                        return content.strip()
+                        raw_content = await file.read()
+                    content = ""
+                    lines = raw_content.splitlines()
+                    current_section = ""
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if re.match(r"^第[0-9一二三四五六七八九十]+章", line) or re.match(r"^[0-9]+(\\.[0-9]+)+", line):
+                            current_section = line
+                            content += f"\n【{current_section}】\n"
+                        else:
+                            if current_section:
+                                content += f"[{current_section}] "
+                            content += line + "\n"
+                    return content.strip()
                 except:
                     return f"文本文件解析失败: {str(e)}"
         else:
-            # 对于其他类型的文件，尝试作为二进制文件读取
+            # 其他类型
             try:
                 with open(file_path, 'rb') as file:
                     binary_content = file.read()
-                    # 尝试解码为UTF-8
                     try:
                         return binary_content.decode('utf-8', errors='ignore').strip()
                     except:
                         return f"无法解析文件内容: {os.path.basename(file_path)}"
             except Exception as e:
                 return f"文件读取失败: {str(e)}"
-                        
     except Exception as e:
         print(f"文件内容提取失败 {file_path}: {e}")
         return f"文件内容提取失败: {str(e)}"
@@ -698,8 +728,8 @@ async def root():
     return {
         "message": "考试复习助手API服务正在运行", 
         "version": "1.0.0",
-        "api_key_configured": bool(API_KEY),
-        "api_base_url": BASE_URL
+        "api_key_configured": bool(DEFAULT_API_KEY),
+        "api_base_url": DEFAULT_API_BASE
     }
 
 @app.post("/create-session")
@@ -749,11 +779,11 @@ async def upload_files(
         
         # 创建用户专属的上传目录
         user_uploads_dir = DATA_DIR / "uploads" / str(session_id)
-        user_uploads_dir.mkdir(parents=True, exist_ok=True)
+        user_uploads_dir = Path(user_uploads_dir)
         
         for file in files:
             # 保存文件到用户专属目录
-            file_path = user_uploads_dir / file.filename
+            file_path = user_uploads_dir / str(file.filename)
             os.makedirs(user_uploads_dir, exist_ok=True)
             
             async with aiofiles.open(file_path, 'wb') as f:
@@ -794,51 +824,64 @@ async def upload_files(
         raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
 
 @app.post("/chat")
-async def chat_with_ai(request: ChatMessage):
-    """与AI聊天"""
-    try:
-        # 调用大模型API
-        response = await call_large_model_api(
-            request.message,
-            request.knowledge_base_1,
-            request.knowledge_base_2
-        )
-        
-        return {
-            "success": True,
-            "answer": response["answer"],
-            "references": response.get("references", [])
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI服务调用失败: {str(e)}")
+async def chat_api(req: Request):
+    data = await req.json()
+    model = data.get("model") or DEFAULT_MODEL
+    api_key = data.get("api_key")
+    if not api_key:
+        api_key = ""
+    api_base = data.get("api_base")
+    if not api_base:
+        api_base = ""
+    message = data.get("message")
+    session_id = data.get("session_id")
+    knowledge_base_1 = data.get("knowledge_base_1", [])
+    knowledge_base_2 = data.get("knowledge_base_2", [])
+    print(f"[CHAT] 收到请求: model={model}, api_key={api_key[:8]}, api_base={api_base}, session_id={session_id}")
+    if not model or not message or not session_id:
+        raise HTTPException(status_code=400, detail="缺少必要的参数")
+    response = await call_large_model_api(message, knowledge_base_1, knowledge_base_2, model, api_key, api_base)
+    return {"answer": response["answer"]}
 
 @app.post("/generate-questions")
-async def generate_questions(request: QuestionRequest):
+async def generate_questions(request: Request):
     """生成题目"""
     try:
-        # 调用大模型API生成基于知识库的题目
+        data = await request.json()
+        topic = data.get("topic")
+        session_id = data.get("session_id")
+        difficulty = data.get("difficulty", "medium")
+        count = data.get("count", 5)
+        question_type = data.get("question_type", "multiple_choice")
+        knowledge_base_1 = data.get("knowledge_base_1", [])
+        knowledge_base_2 = data.get("knowledge_base_2", [])
+        model = data.get("model") or DEFAULT_MODEL
+        api_key = data.get("api_key") or ""
+        api_base = data.get("api_base") or ""
+        print(f"[GENERATE-QUESTIONS] 收到请求: model={model}, api_key={api_key[:8]}, api_base={api_base}, session_id={session_id}")
         response = await call_large_model_for_questions(
-            request.topic,
-            request.difficulty,
-            request.count,
-            request.question_type,
-            request.knowledge_base_1,
-            request.knowledge_base_2
+            topic,
+            difficulty,
+            count,
+            question_type,
+            knowledge_base_1,
+            knowledge_base_2,
+            model,
+            api_key,
+            api_base
         )
-        
         return {
             "success": True,
             "questions": response["questions"],
             "total": response["total"]
         }
-    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成题目失败: {str(e)}")
 
 @app.get("/knowledge-base/{session_id}")
 async def get_knowledge_base(session_id: str):
     """获取知识库文件列表"""
+    sync_user_files_with_uploads(session_id)  # 新增
     user_data = load_user_data(session_id)
     if not user_data:
         return {
@@ -892,6 +935,7 @@ async def get_file_content(session_id: str, file_id: str):
 async def get_all_knowledge_base_content(session_id: str):
     """获取所有知识库文件的内容"""
     try:
+        sync_user_files_with_uploads(session_id)  # 新增
         user_data = load_user_data(session_id)
         if not user_data:
             return {
@@ -922,6 +966,7 @@ async def get_all_knowledge_base_content(session_id: str):
 async def delete_file(session_id: str, file_id: str, knowledge_type: str = Query(..., description="知识库类型：knowledge 或 questions")):
     """删除文件"""
     try:
+        sync_user_files_with_uploads(session_id)  # 新增
         user_data = load_user_data(session_id)
         if not user_data:
             raise HTTPException(status_code=404, detail="会话不存在")
@@ -945,7 +990,7 @@ async def delete_file(session_id: str, file_id: str, knowledge_type: str = Query
             if os.path.exists(file_info["path"]):
                 os.remove(file_info["path"])
         except Exception as e:
-            print(f"删除物理文件失败: {e}")
+            print(f"删除物理文件失败: {e}（忽略）")
         
         # 从内存中删除文件信息
         user_data[knowledge_type].pop(file_index)
@@ -971,17 +1016,21 @@ async def health_check():
             "knowledge": len(uploaded_files["knowledge"]),
             "questions": len(uploaded_files["questions"])
         },
-        "api_key_configured": bool(API_KEY)
+        "api_key_configured": bool(DEFAULT_API_KEY)
     }
 
 @app.post("/rescan-files")
 async def rescan_files():
-    """重新扫描uploads目录，重建文件信息"""
+    """重新扫描uploads目录，重建文件信息并同步所有session索引"""
     try:
         scan_uploads_directory()
+        # 同步所有 session
+        for user_file in USERS_DIR.glob("*.json"):
+            session_id = user_file.stem
+            sync_user_files_with_uploads(session_id)
         return {
             "success": True,
-            "message": "文件扫描完成",
+            "message": "文件扫描完成并已同步所有会话索引",
             "files_count": {
                 "knowledge": len(uploaded_files["knowledge"]),
                 "questions": len(uploaded_files["questions"])
@@ -989,6 +1038,26 @@ async def rescan_files():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"重新扫描文件失败: {str(e)}")
+
+# 新增：同步 session 文件索引与 uploads 目录
+def sync_user_files_with_uploads(session_id: str):
+    """同步用户 session 文件索引，只保留实际存在的文件"""
+    user_data = load_user_data(session_id)
+    if not user_data:
+        return
+    changed = False
+    for key in ["knowledge", "questions"]:
+        file_list = user_data.get(key, [])
+        new_file_list = []
+        for file in file_list:
+            if os.path.exists(file["path"]):
+                new_file_list.append(file)
+            else:
+                changed = True
+        user_data[key] = new_file_list
+    if changed:
+        user_sessions[session_id] = user_data
+        save_user_data(session_id)
 
 if __name__ == "__main__":
     uvicorn.run(

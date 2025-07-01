@@ -13,6 +13,19 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [sessionId, setSessionId] = useState(null)
   const [sessionLoading, setSessionLoading] = useState(true)
+  const [model, setModel] = useState(localStorage.getItem('model') || 'default')
+  const [modelInput, setModelInput] = useState(model)
+  const [apiKey, setApiKey] = useState('')
+  const [apiKeyInput, setApiKeyInput] = useState('')
+  const [thinkingTime, setThinkingTime] = useState(0)
+  const [thinkingTimer, setThinkingTimer] = useState(null)
+  const [showSidebar, setShowSidebar] = useState(false)
+
+  // 监听apiKeyInput变化，自动保存到localStorage并更新apiKey
+  useEffect(() => {
+    localStorage.setItem('api_key', apiKeyInput)
+    setApiKey(apiKeyInput)
+  }, [apiKeyInput])
 
   // 初始化会话
   useEffect(() => {
@@ -123,6 +136,13 @@ function App() {
 
   const handleChatMessage = async (message) => {
     try {
+      setIsLoading(true)
+      setThinkingTime(0)
+      if (thinkingTimer) clearInterval(thinkingTimer)
+      const timer = setInterval(() => {
+        setThinkingTime(prev => prev + 1)
+      }, 1000)
+      setThinkingTimer(timer)
       // 检查是否是题目生成请求（明确要求生成新题目）
       const isQuestionGenerationRequest = (
         message.toLowerCase().includes('生成题目') || 
@@ -157,16 +177,20 @@ function App() {
           let formattedResponse = `## 📝 为您生成的题目 (${sourceType})\n\n`
           
           questions.forEach((question, index) => {
-            const source = question.source === 'extracted' ? '📚 来自题目库' : '🤖 基于知识点生成'
-            formattedResponse += `### 题目 ${index + 1} ${source}\n\n`
-            formattedResponse += `**题目：** ${question.question}\n\n`
-            formattedResponse += `**答案：** ${question.answer}\n\n`
-            formattedResponse += `**详细解释：** ${question.explanation}\n\n`
-            
+            formattedResponse += `题目${index + 1}\n\n`
+            formattedResponse += `题干：${question.question}\n\n`
+            formattedResponse += `答案：${question.answer}\n\n`
+            formattedResponse += `详细解释：${question.explanation}\n\n`
             if (question.references && question.references.length > 0) {
-              formattedResponse += `**知识库引用：** ${question.references.join(', ')}\n\n`
+              const refs = question.references.map(ref => {
+                if (typeof ref === 'string') return ref
+                if (ref.file) return ref.file
+                if (ref.name) return ref.name
+                if (ref.content) return ref.content.slice(0, 30) + '...'
+                return JSON.stringify(ref)
+              })
+              formattedResponse += `知识库引用：${refs.join(', ')}\n\n`
             }
-            
             formattedResponse += `---\n\n`
           })
           
@@ -192,7 +216,15 @@ function App() {
         { role: 'user', content: message }, 
         { role: 'assistant', content: response }
       ])
+      if (thinkingTimer) clearInterval(timer)
+      setThinkingTimer(null)
+      setIsLoading(false)
+      setThinkingTime(0)
     } catch (error) {
+      if (thinkingTimer) clearInterval(thinkingTimer)
+      setThinkingTimer(null)
+      setIsLoading(false)
+      setThinkingTime(0)
       console.error('发送消息失败:', error)
       setChatHistory(prev => [
         ...prev, 
@@ -219,8 +251,19 @@ function App() {
                   </span>
                 </div>
               )}
+              <span className="ml-2 font-bold text-lg">考试复习助手</span>
             </div>
             <div className="flex items-center space-x-4">
+              <select value={modelInput} onChange={e => setModelInput(e.target.value)} className="border rounded px-2 py-1">
+                <option value="default">默认（后端配置）</option>
+                <option value="deepseek-chat">DeepSeek</option>
+                <option value="step-1-8k">阶跃星辰</option>
+                <option value="gpt-3.5-turbo">OpenAI GPT-3.5</option>
+                {/* 可扩展其它模型 */}
+              </select>
+              {modelInput !== 'default' && (
+                <input type="text" value={apiKeyInput} onChange={e => setApiKeyInput(e.target.value)} placeholder="API密钥（留空则用默认模型）" className="border rounded px-2 py-1" style={{width:180}} />
+              )}
               <button
                 onClick={handleCreateNewSession}
                 disabled={sessionLoading}
@@ -260,45 +303,68 @@ function App() {
       </header>
 
       {/* 主要内容区域 */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 flex flex-row relative px-4 py-8">
         {activeTab === 'upload' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <FileUpload
-              title="上传复习资料"
-              description="上传您的考试科目复习资料，作为知识库1"
-              onUpload={(files) => handleFileUpload(files, 'knowledge')}
-              acceptedFiles={['.pdf', '.docx', '.txt', '.md']}
-              uploadedFiles={knowledgeBase1}
-              knowledgeType="knowledge"
-            />
-            <FileUpload
-              title="上传考试题目"
-              description="上传考试题目，作为知识库2"
-              onUpload={(files) => handleFileUpload(files, 'questions')}
-              acceptedFiles={['.pdf', '.docx', '.txt', '.md']}
-              uploadedFiles={knowledgeBase2}
-              knowledgeType="questions"
-            />
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* 左侧知识库 */}
-            <div className="lg:col-span-1">
-              <KnowledgeBase
-                knowledgeBase1={knowledgeBase1}
-                knowledgeBase2={knowledgeBase2}
-                onRefresh={fetchKnowledgeBase}
-                isLoading={isLoading}
+          <div className="w-full">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <FileUpload
+                title="上传复习资料"
+                description="上传您的考试科目复习资料，作为知识库1"
+                onUpload={(files) => handleFileUpload(files, 'knowledge')}
+                acceptedFiles={['.pdf', '.docx', '.txt', '.md']}
+                uploadedFiles={knowledgeBase1}
+                knowledgeType="knowledge"
+              />
+              <FileUpload
+                title="上传考试题目"
+                description="上传考试题目，作为知识库2"
+                onUpload={(files) => handleFileUpload(files, 'questions')}
+                acceptedFiles={['.pdf', '.docx', '.txt', '.md']}
+                uploadedFiles={knowledgeBase2}
+                knowledgeType="questions"
               />
             </div>
-            {/* 右侧聊天界面 */}
-            <div className="lg:col-span-2">
+          </div>
+        ) : (
+          <>
+            {/* 侧边栏按钮 */}
+            <button
+              className="fixed top-24 left-4 z-30 bg-primary-500 text-white rounded-full w-12 h-12 flex items-center justify-center shadow-lg hover:bg-primary-600 transition"
+              style={{display: showSidebar ? 'none' : 'flex'}}
+              onClick={() => setShowSidebar(true)}
+              title="展开知识库"
+            >
+              📚
+            </button>
+            {/* 侧边栏 */}
+            <div
+              className={`fixed top-0 left-0 h-full bg-white shadow-2xl z-30 flex flex-col transition-all duration-300 ${showSidebar ? 'w-80' : 'w-0 overflow-hidden'}`}
+              style={{maxWidth: '90vw'}}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b">
+                <span className="font-bold text-lg">知识库</span>
+                <button onClick={() => setShowSidebar(false)} className="text-gray-500 hover:text-primary-500 text-xl">×</button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <KnowledgeBase
+                  knowledgeBase1={knowledgeBase1}
+                  knowledgeBase2={knowledgeBase2}
+                  onRefresh={fetchKnowledgeBase}
+                  isLoading={isLoading}
+                />
+              </div>
+            </div>
+            {/* 聊天主区域 */}
+            <div className="flex-1 flex flex-col items-stretch transition-all duration-300" style={{marginLeft: showSidebar ? 320 : 0}}>
               <ChatInterface
                 chatHistory={chatHistory}
                 onSendMessage={handleChatMessage}
               />
+              {isLoading && (
+                <div className="text-gray-500 text-sm mt-2">正在思考...（已等待 {thinkingTime} 秒）</div>
+              )}
             </div>
-          </div>
+          </>
         )}
       </main>
     </div>

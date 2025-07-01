@@ -2,7 +2,7 @@ import axios from 'axios'
 
 // 配置axios默认设置
 const api = axios.create({
-  timeout: 30000, // 30秒超时
+  timeout: 60000, // 60秒超时
   headers: {
     'Content-Type': 'application/json',
   },
@@ -76,12 +76,19 @@ export const sendMessageToAI = async (message, knowledgeBase1, knowledgeBase2) =
       questionFiles = knowledgeBase2
     }
     
+    // 获取apiKey
+    const apiKey = localStorage.getItem('api_key') || ''
+    
     // 调用聊天接口
     const payload = {
       message,
       session_id: sessionId,
       knowledge_base_1: knowledgeFiles,
       knowledge_base_2: questionFiles
+    }
+    // 只有apiKey有值且非空字符串时才传递
+    if (apiKey && apiKey.trim() !== '') {
+      payload.api_key = apiKey
     }
 
     console.log('发送聊天请求...')
@@ -273,5 +280,21 @@ export const deleteFileFromKnowledgeBase = async (fileId, knowledgeType) => {
     throw new Error('文件删除失败，请重试')
   }
 }
+
+// axios请求拦截器，自动加上api_key
+api.interceptors.request.use(config => {
+  const apiKey = localStorage.getItem('api_key')
+  const model = localStorage.getItem('model')
+  // 只在非 default 时传递
+  if (model && model !== 'default') {
+    if (apiKey) config.headers['x-api-key'] = apiKey
+    config.headers['x-model'] = model
+    if (config.data && typeof config.data === 'object') {
+      config.data.api_key = apiKey
+      config.data.model = model
+    }
+  }
+  return config
+})
 
 export default api 

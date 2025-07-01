@@ -1,48 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Send, User, Bot, Loader2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 
-// LaTeX公式转换为自然数学语言的函数
-const convertLatexToNaturalLanguage = (text) => {
-  if (!text) return text
-  
-  let converted = text
-  
-  // 数学符号转换
-  const mathSymbols = {
-    '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ',
-    '\\theta': 'θ', '\\lambda': 'λ', '\\mu': 'μ', '\\pi': 'π',
-    '\\sigma': 'σ', '\\phi': 'φ', '\\omega': 'ω', '\\infty': '∞',
-    '\\sum': '求和', '\\prod': '连乘', '\\int': '积分', '\\sqrt': '根号',
-    '\\frac': '分数', '\\times': '×', '\\div': '÷', '\\pm': '±',
-    '\\leq': '≤', '\\geq': '≥', '\\neq': '≠', '\\approx': '≈',
-    '\\sin': '正弦', '\\cos': '余弦', '\\tan': '正切', '\\log': '对数',
-    '\\ln': '自然对数', '\\exp': '指数函数', '\\lim': '极限'
-  }
-  
-  // 替换数学符号
-  Object.entries(mathSymbols).forEach(([latex, natural]) => {
-    const regex = new RegExp(latex.replace(/\\/g, '\\\\'), 'g')
-    converted = converted.replace(regex, natural)
-  })
-  
-  // 处理分数格式 \frac{a}{b} -> a/b
-  converted = converted.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1)/($2)')
-  
-  // 处理根号 \sqrt{a} -> √a
-  converted = converted.replace(/\\sqrt\{([^}]+)\}/g, '√($1)')
-  
-  // 处理上下标
-  converted = converted.replace(/([a-zA-Z0-9])\^([a-zA-Z0-9]+)/g, '$1的$2次方')
-  converted = converted.replace(/([a-zA-Z0-9])_([a-zA-Z0-9]+)/g, '$1的下标$2')
-  
-  // 处理数学公式
-  converted = converted.replace(/\$([^$]+)\$/g, '【数学公式：$1】')
-  converted = converted.replace(/\\\(([^)]+)\\\)/g, '【数学公式：$1】')
-  converted = converted.replace(/\$\$([^$]+)\$\$/g, '【数学公式：$1】')
-  converted = converted.replace(/\\\[([^\]]+)\\\]/g, '【数学公式：$1】')
-  
-  return converted
+const replaceLatexChineseUnits = (str) => {
+  return str
+    .replace(/牛·米/g, 'N·m')
+    .replace(/安/g, 'A')
+    .replace(/伏/g, 'V')
+    .replace(/秒/g, 's')
+    .replace(/弧度/g, 'rad')
+    .replace(/每秒/g, '/s')
+    .replace(/瓦/g, 'W')
+    .replace(/米/g, 'm')
+    .replace(/每分/g, '/min')
 }
 
 const ChatInterface = ({ chatHistory, onSendMessage }) => {
@@ -82,13 +55,13 @@ const ChatInterface = ({ chatHistory, onSendMessage }) => {
 
   const renderMessage = (msg, index) => {
     const isUser = msg.role === 'user'
-    
+    let content = msg.content
     return (
       <div
         key={index}
         className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}
       >
-        <div className={`flex max-w-[80%] ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+        <div className={`flex w-full ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
           <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
             isUser ? 'bg-primary-500 text-white ml-2' : 'bg-gray-200 text-gray-600 mr-2'
           }`}>
@@ -98,26 +71,25 @@ const ChatInterface = ({ chatHistory, onSendMessage }) => {
             isUser 
               ? 'bg-primary-500 text-white' 
               : 'bg-white border border-gray-200 text-gray-900'
-          }`}>
+          }`} style={{whiteSpace: 'pre-wrap', wordBreak: 'break-all'}}>
             {isUser ? (
               <p className="text-sm">{msg.content}</p>
             ) : (
-              <div className="prose prose-sm max-w-none">
+              <div style={{whiteSpace: 'pre-wrap', wordBreak: 'break-all'}}>
                 <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
                   components={{
-                    // 自定义链接样式，用于知识库引用
                     a: ({ node, ...props }) => (
                       <a
                         {...props}
                         className="text-blue-600 hover:text-blue-800 underline cursor-pointer"
                         onClick={(e) => {
                           e.preventDefault()
-                          // 这里可以添加跳转到知识库的逻辑
                           console.log('点击了知识库引用:', props.href)
                         }}
                       />
                     ),
-                    // 自定义代码块样式
                     code: ({ node, inline, ...props }) => (
                       inline ? (
                         <code {...props} className="bg-gray-100 px-1 py-0.5 rounded text-sm" />
@@ -126,22 +98,10 @@ const ChatInterface = ({ chatHistory, onSendMessage }) => {
                           <code {...props} className="text-sm" />
                         </pre>
                       )
-                    ),
-                    // 自定义段落，处理LaTeX公式
-                    p: ({ node, children, ...props }) => {
-                      const text = children?.toString() || ''
-                      const convertedText = convertLatexToNaturalLanguage(text)
-                      return <p {...props}>{convertedText}</p>
-                    },
-                    // 自定义文本节点，处理LaTeX公式
-                    text: ({ node, children, ...props }) => {
-                      const text = children?.toString() || ''
-                      const convertedText = convertLatexToNaturalLanguage(text)
-                      return <span {...props}>{convertedText}</span>
-                    }
+                    )
                   }}
                 >
-                  {convertLatexToNaturalLanguage(msg.content)}
+                  {content}
                 </ReactMarkdown>
               </div>
             )}
@@ -152,7 +112,7 @@ const ChatInterface = ({ chatHistory, onSendMessage }) => {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border h-[600px] flex flex-col">
+    <div className="flex-1 flex flex-col h-full bg-white rounded-lg shadow-sm border">
       {/* 聊天头部 */}
       <div className="border-b px-6 py-4">
         <h3 className="text-lg font-semibold text-gray-900">逢考必过</h3>
@@ -160,7 +120,7 @@ const ChatInterface = ({ chatHistory, onSendMessage }) => {
       </div>
 
       {/* 消息列表 */}
-      <div className="flex-1 overflow-y-auto p-6 scrollbar-hide">
+      <div className="flex-1 overflow-y-auto p-6" style={{minHeight:0}}>
         {chatHistory.length === 0 ? (
           <div className="text-center text-gray-500 mt-8">
             <Bot className="mx-auto h-12 w-12 text-gray-300 mb-4" />
@@ -184,7 +144,7 @@ const ChatInterface = ({ chatHistory, onSendMessage }) => {
         )}
         {isLoading && (
           <div className="flex justify-start mb-4">
-            <div className="flex max-w-[80%]">
+            <div className="flex w-full">
               <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-200 text-gray-600 mr-2 flex items-center justify-center">
                 <Bot className="w-4 h-4" />
               </div>
